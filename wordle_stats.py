@@ -12,7 +12,7 @@ words = {}
 for c in char_range('a', 'z'):
     letters[c] = 0
 
-with open('/home/mark/wordle-sub-list-by-freq') as fd:
+with open('wordle-sub-list-by-freq') as fd:
     for word in fd:
         word = word.strip()
         words[word] = 0
@@ -25,7 +25,7 @@ for word in list(words):
 # for k, v in sorted(letters.items(), key= lambda x:x[1], reverse=True):
 #     print(k, v)
 
-with open('/home/mark/wordle-by-letter-freq', mode='w') as fd:
+with open('wordle-by-letter-freq', mode='w') as fd:
     for k, v in sorted(words.items(), key=lambda x:x[1], reverse=True):
         print(k, v)
         fd.write(k + '\n')
