@@ -3,6 +3,7 @@
 import sys
 import os
 import re
+from subprocess import run
 from rich.console import Console
 from typing import NewType
 
@@ -23,6 +24,7 @@ class WordleSlot:
         self.RightLetter = RightLetter
         self.WrongPlaceLetter = WrongPlaceLetter
 WordleSlots = NewType('WordleSlots', list[WordleSlot])
+GuessWords = NewType('GuessWords', list[str])
 
 
 class Wordle:
@@ -32,9 +34,8 @@ class Wordle:
         self.incudedLettersRE: str = ''
         self.excludedLettersRE: str = ''
         self.letterPositionsRE: str = ''
-        self.words: list[str] = []
-        self.loadWords()
         self.wordleSlots = WordleSlots([])
+
         for _ in range(WORDLE_LEN):
             self.wordleSlots.append(
                 WordleSlot(
@@ -42,14 +43,28 @@ class Wordle:
                     WrongPlaceLetter = []
                 )
             )
+        self.loadWords()
 
     def loadWords(self) -> None:
-        with open(SOURCE_WORDS) as fd:
-            for line in fd:
-                self.words.append(line)
+        self.words = GuessWords([x.strip() for x in open(SOURCE_WORDS)])
+    
+    def outputGuesses(self, words: GuessWords) -> None:
+        outStr = ''
+        for word in words:
+            outStr += word + '\n'
+        if len(words) > 40:
+            run(['/usr/bin/less'], input=outStr, encoding='utf8')
+        else:
+            print(outStr, end='')
 
-    def makeREs(self, word: WordleWord) -> None:
-        pass
+    def makeREs(self) -> None:
+        for i, slot in enumerate(self.wordleSlots):
+            if slot.RightLetter:
+                self.letterPositionsRE[i] = slot.RightLetter
+            elif slot.WrongPlaceLetter:
+                for c in slot.WrongPlaceLetter:
+                    
+
 
     def processWord(self, word: WordleWord) -> None:
         for i, c in enumerate(word):
@@ -94,6 +109,7 @@ def main():
     wordle = Wordle()
     word = wordle.get_wordle_word()
     wordle.processWord(word)
+    wordle.makeREs()
     # Vars to build the REs
     # wordle_slots = []  # 5 Slot structure with correct letter, and incorrect letters list
 

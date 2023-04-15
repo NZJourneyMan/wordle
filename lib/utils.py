@@ -12,9 +12,8 @@ WRONG_PLACE = -2
 RIGHT_PLACE = -3
 
 class KeyStroke:
-
     def __init__(self, key: str, keyType: int| str) -> None:
-        self.key: str = key
+        self.key = key
         self.keyType = keyType
         
 
