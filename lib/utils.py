@@ -21,6 +21,22 @@ class KeyStroke:
         self.key = key
         self.keyType = keyType
         
+    def __str__(self) -> str:
+        status = ['RIGHT_PLACE', 'WRONG_PLACE', 'ALL_WRONG']
+        retType = 'Unknown'
+        if isinstance(self.keyType, int):
+            retType = status[int(self.keyType) + 3]
+        elif self.keyType == ESC:
+            retType = 'ESC'
+        elif self.keyType == RETURN:
+            retType = 'RETURN'
+        elif self.keyType == BACKSPACE:
+            retType = 'BACKSPACE'
+        else:
+            raise RuntimeError('Programming error in Keystroke.__str__: '
+                               'Should not have got here')
+        
+        return f'{self.key}: {retType}'
 
 def getkey() -> str:
     old_settings = termios.tcgetattr(sys.stdin)
@@ -30,7 +46,7 @@ def getkey() -> str:
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-def wordle_getkey(doError: Callable[[], None]) -> KeyStroke:
+def wordle_getkey(doError: Callable[[], None]) -> KeyStroke|None:
     k = getkey()
     # print([ord(x) for x in k])
     if len(k) == 1:
@@ -48,4 +64,4 @@ def wordle_getkey(doError: Callable[[], None]) -> KeyStroke:
     elif len(k) == 2 and k[0] == ESC and k[1] in ascii_lowercase:
         return KeyStroke(k[1].lower(), ALL_WRONG)
     doError()
-    return KeyStroke('', '')
+    return None

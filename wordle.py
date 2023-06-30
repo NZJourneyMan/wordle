@@ -3,11 +3,12 @@
 import sys
 import os
 import re
-from subprocess import run
 from rich.console import Console
 from typing import NewType, Iterator
 import chime  # type: ignore
 from argparse import ArgumentParser
+from collections import defaultdict
+# from itertools import combinations
 
 ROOT = os.path.dirname(__file__)
 
@@ -27,68 +28,137 @@ class Global:
     debug: bool
 
 
+class LetterCount:
+    def __init__(self, count: int) -> None:
+        self.count: int = count
+        self.max: bool = True if count == 0 else False
+
+
+class SecretWordStatusLetter:
+    def __init__(self, letter: str, used: bool) -> None:
+        self.letter = letter
+        self.used = used
+
+
 class Wordle:
     def __init__(self) -> None:
         self.excludedLettersRE = ''
         self.incudedLettersRE = ''
         self.letterPositionsRE = ''
+        self.letterCount: dict[str, LetterCount] = {}
+        self.lineLetterCount: dict[str, LetterCount] = {}
+        self.letterCountRE = ''
         self.wordleLines = WordleLines([])
         self.newWordleLine()
         self.loadWords()
 
     def newWordleLine(self) -> None:
-        try:
-            self.wordleLines.append(WordleLine([]))
-        except OSError as e:
-            raise ScriptError(str(e))
+        self.wordleLines.append(WordleLine([]))
 
     def loadWords(self) -> None:
         self.words = GuessWords([x.strip() for x in open(SOURCE_WORDS)])
 
-    def getslots(self) -> Iterator[list[KeyStroke]]:
+    def getColumns(self) -> Iterator[list[KeyStroke]]:
         for i in range(len(self.wordleLines[0])):
             yield [cells[i] for cells in self.wordleLines]
 
+    def addLineLetterCount(self, letter: str, increment: int) -> None:
+        if letter in self.lineLetterCount:
+            if increment > 0:
+                self.lineLetterCount[letter].count += increment
+            else:
+                self.lineLetterCount[letter].max = True
+        else:
+            self.lineLetterCount[letter] = LetterCount(increment)
+
+    def resetLineLetterCount(self) -> None:
+        self.lineLetterCount = {}
+
+    def mergeLineLetterCount(self) -> None:
+        for letter, letterCount in self.lineLetterCount.items():
+            if letter in self.letterCount: 
+                if letterCount.count > self.letterCount[letter].count:
+                    self.letterCount[letter].count = letterCount.count
+                if letterCount.max:
+                    self.letterCount[letter].max = letterCount.max
+            else:
+                self.letterCount[letter] = letterCount
+
     def makeREs(self) -> None:
-        self.excludedLettersRE = '(?!.*['
-        self.incudedLettersRE = ''
+        self.letterCount = {}
+        self.letterCountRE = ''
         self.letterPositionsRE = ''
-        for slot in self.getslots():
+        # Generate positional re characters for each column
+        for slot in self.getColumns():
             correct = ''
             notPostition = '[^'
-            included = ''
-            excluded = ''
             for key in slot:
                 if key.keyType == RIGHT_PLACE:
                     correct = key.key
                 if key.keyType == WRONG_PLACE:
                     notPostition += key.key
-                    included += f'(?=.*{key.key})'
-                if key.keyType == ALL_WRONG:
-                    excluded += key.key
             if correct:
                 self.letterPositionsRE += correct 
             elif len(notPostition) > 2:
                 self.letterPositionsRE += notPostition + ']'
             else:
                 self.letterPositionsRE += '.'
-            self.excludedLettersRE += excluded
-            self.incudedLettersRE += included
-        self.excludedLettersRE += '])'
+        # Go over each line and work out how many of each letter is used
+        for row in self.wordleLines:
+            for key in row:
+                if key.keyType in [RIGHT_PLACE, WRONG_PLACE]:
+                    self.addLineLetterCount(key.key, 1)
+                else:
+                    self.addLineLetterCount(key.key, 0)
+            self.mergeLineLetterCount()
+            self.resetLineLetterCount()
+
+        for letter, count in self.letterCount.items():
+            countStr = f'{count.count}' if count.max else f'{count.count},'
+            self.letterCountRE += f'(?=^[^{letter}]*({letter}[^{letter}]*){{{countStr}}}$)'
 
     def calculateWords(self) -> GuessWords:
         words = GuessWords([])
-        incExcRE = '^' + self.incudedLettersRE \
-            + (self.excludedLettersRE if len(self.excludedLettersRE) > 9 else '')
         positionRE = self.letterPositionsRE
+        letterCountRE = self.letterCountRE
         if Global.debug:
-            print(f'incExcRE: {incExcRE}')
+            print(f'letterCountRE: {letterCountRE}')
             print(f'positionRE: {positionRE}')
         for word in self.words:
-            if re.search(incExcRE, word) \
+            if re.search(letterCountRE, word) \
                     and re.search(positionRE, word):
                 words.append(word)
         return words 
+    
+    def mkShortList(self, words: list[str]) -> GuessWords:
+        lettersToTry: dict[str, int] = defaultdict(int)
+        goodLetters: set[str] = set()
+        shortListWords: list[str] = []
+        # Get "good" letters
+        for line in self.wordleLines:
+            for key in line:
+                if key.keyType in [RIGHT_PLACE, WRONG_PLACE]:
+                    goodLetters.add(key.key)
+        for word in words:
+            for ch in word:
+                if ch not in goodLetters:
+                    lettersToTry[ch] += 1
+        lettersToTryItems = sorted(lettersToTry.items(), key=lambda x: x[1], reverse=True)
+        for numToTry in range(5, 0, -1):
+            shortListWords = []
+            wordsRE = ''
+            for letter, _ in lettersToTryItems[:numToTry]:
+                wordsRE += f'(?=.*{letter})'
+            print('WordsRE:', wordsRE)
+            for word in self.words:
+                if re.search(wordsRE, word):
+                    shortListWords.append(word)
+            if shortListWords:
+                break
+        if not shortListWords:
+            raise RuntimeError('Weird, no words found. Programming error?')
+        print('Good letters:', goodLetters)
+        return GuessWords(shortListWords)
             
     def printLetter(self, key: KeyStroke) -> bool:
         if key.keyType == BACKSPACE:
@@ -105,16 +175,18 @@ class Wordle:
             return False
         return True
     
-    def printWords(self, words: GuessWords) -> None:
-        msg = f'Found {len(words)} words:'
-        outStr = f'{msg}\n'
-        for word in words:
-            outStr += word + '\n'
-        if len(words) > 40:
-            run(['/usr/bin/less'], input=outStr, encoding='utf8')
-            print(msg.rstrip(':'))
-        else:
-            print(outStr, end='')
+    def printWords(self, antiWords:GuessWords, words: GuessWords) -> None:
+        # Anti Words
+        print('Up to 10 antiwords:')
+        max = 10 if len(antiWords) > 10 else len(antiWords)
+        for i in range(max):
+            print(antiWords[i])
+        # Trial Words
+        max = 20 if len(words) > 20 else len(words)
+        print(f'\nFound {len(words)} words', end='')
+        print(f', showing the first {max}:' if len(words) > max else ':')
+        for i in range(max):
+            print(words[i])
     
     def checkIllegal(self, key: KeyStroke) -> bool:
         '''
@@ -146,6 +218,36 @@ class Wordle:
                 return False
         return True
 
+    def indexSecretWordStatus(self, letter: str, 
+                              secretWordStatus: list[SecretWordStatusLetter]) -> int:
+        for i, c in enumerate(secretWordStatus):
+            if letter == c.letter:
+                if c.used is False:
+                    return i
+        return -1
+
+    def makeGYB(self, guessWord: str, secretWord: str) -> WordleLine:
+        secretWordStatus = [SecretWordStatusLetter(x, False) for x in secretWord]
+        resultWord = WordleLine([KeyStroke('', 0) for _ in range(WORDLE_LEN)])
+        # Check Green
+        for col, c in enumerate(guessWord):
+            if c == secretWordStatus[col].letter:
+                resultWord[col] = KeyStroke(c, RIGHT_PLACE)
+                secretWordStatus[col].used = True
+
+        # Check Yellow and Black
+        for col, c in enumerate(guessWord):
+            if resultWord[col].key:
+                continue
+            else:
+                i = self.indexSecretWordStatus(c, secretWordStatus)
+                if i > -1:  # Check Yellow
+                    secretWordStatus[i].used = True
+                    resultWord[col] = KeyStroke(c, WRONG_PLACE)
+                else:  # Must be black
+                    resultWord[col] = KeyStroke(c, ALL_WRONG)
+        return resultWord
+
     def event_loop(self) -> int:
         '''
         Event loop to allow checking each key as it is entered so illegal key combinations
@@ -153,7 +255,9 @@ class Wordle:
         '''
         self.console = Console()
         while True:
-            key = wordle_getkey(chime.warning) 
+            key = wordle_getkey(chime.warning)
+            if key is None:
+                continue
             line = self.wordleLines[-1]
             if key.keyType == BACKSPACE:
                 if len(line) > 0:
@@ -175,11 +279,12 @@ class Wordle:
                     if len(words) == 0:
                         chime.theme('zelda')
                         chime.error()
-                        print('No words found, so giving up like a coward ☹️')
+                        print('No words found, so giving up️')
                         return 1
-                    self.printWords(words)
+                    antiWords = self.mkShortList(words)
+                    self.printWords(antiWords, words)
                     self.newWordleLine()
-                    print('> ', end='')
+                    print('> ', end='', flush=True)
                 else:
                     chime.warning()
             elif len(line) == WORDLE_LEN:
@@ -190,6 +295,7 @@ class Wordle:
                 self.printLetter(key)
                 line.append(key)
         return 0
+
 
 def main():
     parser = ArgumentParser()
@@ -210,10 +316,6 @@ def main():
     except ScriptError as e:
         print(str(e), file=sys.stderr)
         return 1
-    # print('letterPositionsRE', wordle.letterPositionsRE)
-    # print('incudedLettersRE', wordle.incudedLettersRE)
-    # print('excludedLettersRE', wordle.excludedLettersRE)
-
 
 if __name__ == '__main__':
     sys.exit(main())
