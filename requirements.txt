@@ -1,3 +1,4 @@
+requests
 asttokens==2.2.1
 backcall==0.2.0
 chime==0.7.0

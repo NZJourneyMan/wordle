@@ -8,13 +8,15 @@ from typing import NewType, Iterator
 import chime  # type: ignore
 from argparse import ArgumentParser
 from collections import defaultdict
-# from itertools import combinations
+from itertools import combinations
+import requests
 
 ROOT = os.path.dirname(__file__)
 
 sys.path.append(os.path.join(ROOT, 'lib'))
 from utils import (wordle_getkey, KeyStroke, ScriptError,
     RETURN, BACKSPACE, ALL_WRONG, WRONG_PLACE, RIGHT_PLACE)
+from words import allowedGuesses, answerWords
 
 WORDLE_LEN = 5
 SOURCE_WORDS = os.path.join(ROOT, 'wordle-sub-list-by-freq')
@@ -26,6 +28,7 @@ GuessWords = NewType('GuessWords', list[str])
 
 class Global:
     debug: bool
+    includeUsed: bool
 
 
 class LetterCount:
@@ -41,7 +44,7 @@ class SecretWordStatusLetter:
 
 
 class Wordle:
-    def __init__(self) -> None:
+    def __init__(self, answerWords: list[str], allowedGuesses: list[str]) -> None:
         self.excludedLettersRE = ''
         self.incudedLettersRE = ''
         self.letterPositionsRE = ''
@@ -49,14 +52,24 @@ class Wordle:
         self.lineLetterCount: dict[str, LetterCount] = {}
         self.letterCountRE = ''
         self.wordleLines = WordleLines([])
+        self.answerWords = answerWords
+        self.allowedGuesses = allowedGuesses
         self.newWordleLine()
-        self.loadWords()
+        if not Global.includeUsed:
+            self.removeUsedWords()
 
     def newWordleLine(self) -> None:
         self.wordleLines.append(WordleLine([]))
 
-    def loadWords(self) -> None:
-        self.words = GuessWords([x.strip() for x in open(SOURCE_WORDS)])
+    def removeUsedWords(self):
+        r = requests.get('https://www.stadafa.com/2021/09/every-worlde-word-so-far-updated-daily.html')
+        for line in r.content.splitlines():
+            try:
+                usedWord = re.search(r'^<p>[0-9]+\. (\w+?) ', line.decode())
+                if usedWord:
+                    del(self.answerWords[self.answerWords.index(usedWord.group(1).lower())])
+            except ValueError:
+                continue
 
     def getColumns(self) -> Iterator[list[KeyStroke]]:
         for i in range(len(self.wordleLines[0])):
@@ -76,7 +89,7 @@ class Wordle:
 
     def mergeLineLetterCount(self) -> None:
         for letter, letterCount in self.lineLetterCount.items():
-            if letter in self.letterCount: 
+            if letter in self.letterCount:
                 if letterCount.count > self.letterCount[letter].count:
                     self.letterCount[letter].count = letterCount.count
                 if letterCount.max:
@@ -98,7 +111,7 @@ class Wordle:
                 if key.keyType == WRONG_PLACE:
                     notPostition += key.key
             if correct:
-                self.letterPositionsRE += correct 
+                self.letterPositionsRE += correct
             elif len(notPostition) > 2:
                 self.letterPositionsRE += notPostition + ']'
             else:
@@ -124,14 +137,25 @@ class Wordle:
         if Global.debug:
             print(f'letterCountRE: {letterCountRE}')
             print(f'positionRE: {positionRE}')
-        for word in self.words:
+        for word in self.answerWords:
             if re.search(letterCountRE, word) \
                     and re.search(positionRE, word):
                 words.append(word)
-        return words 
-    
-    def mkShortList(self, words: list[str]) -> GuessWords:
-        lettersToTry: dict[str, int] = defaultdict(int)
+        return words
+
+    def mkAntiWordList(self, words: list[str]) -> GuessWords:
+        '''
+        Things to try:
+        o Get all the letters from the possible remaining words, subtract
+          all the known letters, then rank the remaining letters by frequency
+        o Create a list of unique combinations of 5, 4, 3 & 2 letters from the above letter list
+          and attempt to match each combination with the list of possible answers, if none
+          then use the list of allowable matches. The former has a chance of being the right
+          word, while the later is likely to be an "anti-word". The ideal word has 5 highly ranked
+          letters from the letters list above.
+        '''
+
+        lettersToTryDict: dict[str, int] = defaultdict(int)
         goodLetters: set[str] = set()
         shortListWords: list[str] = []
         # Get "good" letters
@@ -142,24 +166,38 @@ class Wordle:
         for word in words:
             for ch in word:
                 if ch not in goodLetters:
-                    lettersToTry[ch] += 1
-        lettersToTryItems = sorted(lettersToTry.items(), key=lambda x: x[1], reverse=True)
-        for numToTry in range(5, 0, -1):
-            shortListWords = []
-            wordsRE = ''
-            for letter, _ in lettersToTryItems[:numToTry]:
-                wordsRE += f'(?=.*{letter})'
-            print('WordsRE:', wordsRE)
-            for word in self.words:
-                if re.search(wordsRE, word):
-                    shortListWords.append(word)
-            if shortListWords:
+                    lettersToTryDict[ch] += 1
+        lettersToTry = [x[0] for x in sorted(lettersToTryDict.items(), key=lambda x: x[1], reverse=True)]
+        if Global.debug:
+            print('Good letters:', goodLetters)
+            print('Letters to try', lettersToTry)
+        if len(lettersToTry) < 2:
+            return GuessWords([])
+        for numToTry in range(5, 1, -1):  # Try to find words with five letters first, then 4, ...
+            for lettersCombination in combinations(lettersToTry, numToTry):
+                wordsRE = ''
+                for letter in lettersCombination:
+                    wordsRE += f'(?=.*{letter})'
+                for word in self.answerWords:  # First try words that could be the answer
+                    if re.search(wordsRE, word):
+                        if word not in shortListWords:
+                            shortListWords.append(word)
+                            if Global.debug:
+                                print(f'Found "{word}" in AnswerWords with {lettersCombination}')
+                if len(shortListWords) > 1:  # Offer more than one word
+                    break
+                for word in self.allowedGuesses:  # Try words that are unlikely to be the answer
+                    if re.search(wordsRE, word):
+                        if word not in shortListWords:
+                            shortListWords.append(word)
+                            if Global.debug:
+                                print(f'Found "{word}" in AllowedGuesses with {lettersCombination}')
+                if len(shortListWords) > 1:  # Offer more than one word
+                    break
+            if len(shortListWords) > 1:  # Offer more than one word
                 break
-        if not shortListWords:
-            raise RuntimeError('Weird, no words found. Programming error?')
-        print('Good letters:', goodLetters)
         return GuessWords(shortListWords)
-            
+
     def printLetter(self, key: KeyStroke) -> bool:
         if key.keyType == BACKSPACE:
             print('\b \b', flush=True, end='')
@@ -174,7 +212,7 @@ class Wordle:
         else:
             return False
         return True
-    
+
     def printWords(self, antiWords:GuessWords, words: GuessWords) -> None:
         # Anti Words
         print('Up to 10 antiwords:')
@@ -187,7 +225,7 @@ class Wordle:
         print(f', showing the first {max}:' if len(words) > max else ':')
         for i in range(max):
             print(words[i])
-    
+
     def checkIllegal(self, key: KeyStroke) -> bool:
         '''
         Return True if an illegal combination is found:
@@ -218,7 +256,7 @@ class Wordle:
                 return False
         return True
 
-    def indexSecretWordStatus(self, letter: str, 
+    def indexSecretWordStatus(self, letter: str,
                               secretWordStatus: list[SecretWordStatusLetter]) -> int:
         for i, c in enumerate(secretWordStatus):
             if letter == c.letter:
@@ -281,7 +319,7 @@ class Wordle:
                         chime.error()
                         print('No words found, so giving up️')
                         return 1
-                    antiWords = self.mkShortList(words)
+                    antiWords = self.mkAntiWordList(words)
                     self.printWords(antiWords, words)
                     self.newWordleLine()
                     print('> ', end='', flush=True)
@@ -298,11 +336,17 @@ class Wordle:
 
 
 def main():
-    parser = ArgumentParser()
-    parser.add_argument('--debug', action='store_true')
-    Global.debug = parser.parse_args().debug
+    parser = ArgumentParser(prog='wordle',
+                            description='A Wordle solver')
+    parser.add_argument('--debug', '-d', action='store_true')
+    parser.add_argument('--include-used', '-i',
+                        action='store_true',
+                        help='Do not remove used words from consideration')
+    args = parser.parse_args()
+    Global.debug = args.debug
+    Global.includeUsed = args.include_used
     chime.theme('big-sur')
-    wordle = Wordle()
+    wordle = Wordle(answerWords, allowedGuesses)
     print(f'''Enter the results from the Wordle screen. Press:
     - ALT+<letter> for a black tile
     - Just <letter> for a yellow tile

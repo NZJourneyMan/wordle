@@ -1,8 +1,9 @@
 #!/bin/bash
 
-BINDIR="$(readlink -f "$(dirname "$0")")"
+BINDIR="$(dirname "$(readlink -f "$BASH_SOURCE")")"
+ROOTDIR="$(readlink -f "$BINDIR"/..)"
 PROC="$(basename "$0")"
 
 # shellcheck source=/dev/null
-source "$BINDIR"/venv/bin/activate
-"$BINDIR/$PROC.py" "$@"
+source "$ROOTDIR"/venv/bin/activate
+"$ROOTDIR/$PROC.py" "$@"
