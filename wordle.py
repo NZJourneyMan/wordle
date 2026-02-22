@@ -16,10 +16,9 @@ ROOT = os.path.dirname(__file__)
 sys.path.append(os.path.join(ROOT, 'lib'))
 from utils import (wordle_getkey, KeyStroke, ScriptError,
     RETURN, BACKSPACE, ALL_WRONG, WRONG_PLACE, RIGHT_PLACE)
-from words import allowedGuesses, answerWords
+from words import loadWords
 
 WORDLE_LEN = 5
-SOURCE_WORDS = os.path.join(ROOT, 'wordle-sub-list-by-freq')
 
 WordleLine = NewType('WordleLine', list[KeyStroke])
 WordleLines = NewType('WordleLines', list[WordleLine])
@@ -345,6 +344,9 @@ def main():
     args = parser.parse_args()
     Global.debug = args.debug
     Global.includeUsed = args.include_used
+    answerWords, allowedGuesses = loadWords()
+    if Global.debug:
+        print(f'Loaded {len(answerWords)} answer words and {len(allowedGuesses)} allowed guess words')
     chime.theme('big-sur')
     wordle = Wordle(answerWords, allowedGuesses)
     print(f'''Enter the results from the Wordle screen. Press:
