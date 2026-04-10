@@ -28,6 +28,7 @@ GuessWords = NewType('GuessWords', list[str])
 class Global:
     debug: bool
     includeUsed: bool
+    useAll: bool
 
 
 class LetterCount:
@@ -291,8 +292,13 @@ class Wordle:
         can be blocked
         '''
         self.console = Console()
+        retry = False
+        key: KeyStroke | None = None
         while True:
-            key = wordle_getkey(chime.warning)
+            if retry:
+                    retry = False
+            else:
+                key = wordle_getkey(chime.warning)
             if key is None:
                 continue
             line = self.wordleLines[-1]
@@ -314,6 +320,11 @@ class Wordle:
                     self.makeREs()
                     words = self.calculateWords()
                     if len(words) == 0:
+                        if self.answerWords != self.allowedGuesses:
+                            print('Retrying with all words, not just allowed guesses')
+                            self.answerWords = self.allowedGuesses
+                            retry = True
+                            continue
                         chime.theme('zelda')
                         chime.error()
                         print('No words found, so giving up️')
@@ -341,14 +352,18 @@ def main():
     parser.add_argument('--include-used', '-i',
                         action='store_true',
                         help='Do not remove used words from consideration')
+    parser.add_argument('--use-all', '-u',
+                        action='store_true',
+                        help='Use all words, not just allowed guesses')
     args = parser.parse_args()
     Global.debug = args.debug
     Global.includeUsed = args.include_used
+    Global.useAll = args.use_all
     answerWords, allowedGuesses = loadWords()
     if Global.debug:
         print(f'Loaded {len(answerWords)} answer words and {len(allowedGuesses)} allowed guess words')
     chime.theme('big-sur')
-    wordle = Wordle(answerWords, allowedGuesses)
+    wordle = Wordle(answerWords, answerWords if Global.useAll else allowedGuesses)
     print(f'''Enter the results from the Wordle screen. Press:
     - ALT+<letter> for a black tile
     - Just <letter> for a yellow tile
