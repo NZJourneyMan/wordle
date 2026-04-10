@@ -2290,6 +2290,7 @@ slosh
 blare
 rearm
 demur
+carom
 aping
 pulpy
 slunk
